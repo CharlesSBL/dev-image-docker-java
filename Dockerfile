@@ -2,30 +2,28 @@
 FROM eclipse-temurin:21-jdk-ubi9-minimal
 
 # Set environment variables for the container.
-# - CODE_SERVER_PORT: Defines the port for code-server.
-# - PASSWORD: This will be set at runtime for security.
 ENV CODE_SERVER_PORT=8080
+ENV GRADLE_VERSION=8.5
 
-# Install essential development tools and dependencies using microdnf.
-# - We use -y to auto-confirm the installation.
-# - shadow-utils: Provides useradd/groupadd commands.
-# - sudo: to allow the non-root user to perform some privileged operations.
-# - curl, git: standard dev tools.
-# - gnupg2: needed by the code-server install script.
-# - maven, gradle: The most common Java build tools.
-# - We clean up the cache afterwards to keep the image small.
+# Install base dependencies using microdnf.
 RUN microdnf install -y \
     shadow-utils \
     sudo \
-    curl \
     git \
     gnupg2 \
     maven \
-    gradle \
+    unzip \
     && microdnf clean all
 
+# --- Manual Gradle Installation ---
+RUN set -x && \
+    curl -L -o gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" && \
+    unzip gradle.zip && \
+    mv "gradle-${GRADLE_VERSION}" /opt/gradle && \
+    ln -s /opt/gradle/bin/gradle /usr/bin/gradle && \
+    rm gradle.zip
+
 # Create a non-root user 'coder' for security and better user experience.
-# Give this user passwordless sudo privileges.
 RUN useradd -m -s /bin/bash coder && \
     echo "coder ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coder
 
@@ -34,17 +32,7 @@ USER coder
 WORKDIR /home/coder
 
 # Download and install code-server using the official install script.
-# This script is OS-agnostic and will work on UBI.
-# We run this as the 'coder' user; the script will use sudo where needed.
 RUN curl -fsSL https://code-server.dev/install.sh | sh
-
-# Install essential VS Code extensions for Java development.
-# This makes the environment ready to use out-of-the-box.
-RUN code-server --install-extension vscjava.vscode-java-pack && \
-    code-server --install-extension vmware.vscode-spring-boot && \
-    code-server --install-extension vscjava.vscode-gradle && \
-    code-server --install-extension gabrielbb.vscode-lombok && \
-    code-server --install-extension eamodio.gitlens
 
 # Create a workspace directory where projects will live.
 RUN mkdir -p /home/coder/workspace
@@ -54,8 +42,4 @@ WORKDIR /home/coder/workspace
 EXPOSE ${CODE_SERVER_PORT}
 
 # Define the entrypoint to start code-server.
-# - Binds to 0.0.0.0 to be accessible from outside the container.
-# - Uses password authentication (password is passed via the PASSWORD env var).
-# - Disables telemetry by default.
-# - Opens the current working directory (/home/coder/workspace).
 ENTRYPOINT ["code-server", "--bind-addr", "0.0.0.0:8080", "--auth", "password", "--disable-telemetry", "."]
